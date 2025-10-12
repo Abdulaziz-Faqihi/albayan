@@ -1,56 +1,55 @@
-from PyQt6.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout, QSpinBox, QDialog, QLabel
-from PyQt6.QtGui import QKeySequence, QShortcut
+import wx
 from utils.const import Globals
-import qtawesome as qta
 
 
-class GoToDialog(QDialog):
+class GoToDialog(wx.Dialog):
     def __init__(self, parent, current_position: int, max: int, category_label: str):
-        super().__init__(parent)
+        super().__init__(parent, title='الذهاب إلى', size=(300, 150))
         
-        self.setWindowTitle('الذهاب إلى')
-        self.setGeometry(100, 100, 300, 150)
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
         
-        layout = QVBoxLayout()
+        self.label = wx.StaticText(panel, label='أدخل رقم ال{}:'.format(category_label))
+        sizer.Add(self.label, 0, wx.ALL, 5)
         
-        self.label = QLabel('أدخل رقم ال{}:'.format(category_label))
-        layout.addWidget(self.label)
+        self.input_field = wx.SpinCtrl(panel, value=str(current_position), min=1, max=max)
+        self.input_field.SetValue(current_position)
+        self.input_field.SelectAll()
+        sizer.Add(self.input_field, 0, wx.ALL | wx.EXPAND, 5)
         
-        self.input_field = QSpinBox(self)
-        self.input_field.setAccessibleName(self.label.text())
-        self.input_field.setMinimum(1)
-        self.input_field.setMaximum(max)
-        self.input_field.setValue(current_position)
-        self.input_field.selectAll()
-        layout.addWidget(self.input_field)
+        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
         
-        button_layout = QHBoxLayout()
+        self.go_to_button = wx.Button(panel, wx.ID_OK, 'اذهب')
+        self.go_to_button.SetDefault()
+        self.go_to_button.Bind(wx.EVT_BUTTON, self.on_go_to)
+        button_sizer.Add(self.go_to_button, 0, wx.ALL, 5)
         
-        self.go_to_button = QPushButton('اذهب', self)
-        self.go_to_button.setIcon(qta.icon("fa.location-arrow"))
-        self.go_to_button.setDefault(True)
-        self.go_to_button.clicked.connect(self.accept)
-        self.go_to_button.clicked.connect(lambda: Globals.effects_manager.play("move"))
-        button_layout.addWidget(self.go_to_button)
+        self.cancel_button = wx.Button(panel, wx.ID_CANCEL, 'إغلاق')
+        self.cancel_button.Bind(wx.EVT_BUTTON, self.on_cancel)
+        button_sizer.Add(self.cancel_button, 0, wx.ALL, 5)
         
-        self.cancel_button = QPushButton('إغلاق', self)
-        self.cancel_button.setShortcut(QKeySequence("Ctrl+W"))
-        self.cancel_button.setIcon(qta.icon("fa.times"))
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.cancel_button)
-        close_shortcut = QShortcut(QKeySequence("Ctrl+F4"), self)
-        close_shortcut.activated.connect(self.reject)
-
-
-        layout.addLayout(button_layout)
+        # Set up accelerators for keyboard shortcuts
+        accel_entries = [
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord('W'), wx.ID_CANCEL),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, wx.WXK_F4, wx.ID_CANCEL)
+        ]
+        accel_table = wx.AcceleratorTable(accel_entries)
+        self.SetAcceleratorTable(accel_table)
         
-        self.setLayout(layout)
+        sizer.Add(button_sizer, 0, wx.ALL | wx.CENTER, 5)
+        panel.SetSizer(sizer)
+        
+        self.CenterOnParent()
+    
+    def on_go_to(self, event):
+        if Globals.effects_manager:
+            Globals.effects_manager.play("move")
+        self.EndModal(wx.ID_OK)
+    
+    def on_cancel(self, event):
+        self.EndModal(wx.ID_CANCEL)
     
     def get_input_value(self):
-        return self.input_field.value()
-        self.deleteLater()
+        return self.input_field.GetValue()
 
-    def reject(self):
-
-        self.deleteLater()
         
