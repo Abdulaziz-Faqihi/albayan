@@ -4,9 +4,8 @@ current_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 os.chdir(current_dir)
 
 from multiprocessing import freeze_support
-from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtCore import QTimer, Qt, QSharedMemory, QEvent
-from PyQt6.QtNetwork import QLocalServer, QLocalSocket
+import wx
+import wx.adv
 from ui.quran_interface import QuranInterface
 from core_functions.athkar.athkar_scheduler import AthkarScheduler
 from utils.update import UpdateManager
@@ -15,99 +14,71 @@ from utils.const import program_name, program_icon, user_db_path
 from utils.logger import Logger
 from utils.audio_player import StartupSoundEffectPlayer, VolumeController
 
-class SingleInstanceApplication(QApplication):
+class SingleInstanceApplication(wx.App):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         app_id = "Albayan" if sys.argv[0].endswith(".exe") else "Albayan_Source"
-        self.setApplicationName(program_name)
-        self.server_name = app_id
-        self.local_server = QLocalServer(self)
-        self.shared_memory = QSharedMemory(app_id)
-        self.is_running = self.shared_memory.attach()
+        self.SetAppName(program_name)
+        self.instance_name = app_id
+        self.instance_checker = wx.SingleInstanceChecker(app_id)
         self.volume_controller = VolumeController()
-        self.installEventFilter(self) 
-
-        if not self.is_running:
-            if not self.shared_memory.create(1):
-                Logger.error(f"Failed to create shared memory segment: {self.shared_memory.errorString()}")
-                sys.exit(1)
-            self.setup_local_server()
-        else:
+        
+        if self.instance_checker.IsAnotherRunning():
             self.notify_existing_instance()
-            sys.exit(0)
+            return None
+        
+        self.setup_ipc_server()
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            modifiers = event.modifiers()
-
-            if key == Qt.Key.Key_F5:
-                self.volume_controller.switch_category("next")
-                return True
-            elif key == Qt.Key.Key_F6:
-                self.volume_controller.switch_category("previous")
-                return True
-            elif key == Qt.Key.Key_F7:
-                if modifiers & Qt.KeyboardModifier.ControlModifier:  # Ctrl+F7
-                    self.volume_controller.adjust_volume(-10)
-                elif modifiers & Qt.KeyboardModifier.ShiftModifier:  # Shift+F7
-                    self.volume_controller.adjust_volume(-5)
-                elif modifiers & Qt.KeyboardModifier.AltModifier:  # Alt+F7
-                    self.volume_controller.adjust_volume(-100)
-                else:  # F7
-                    self.volume_controller.adjust_volume(-1)
-                return True
-            elif key == Qt.Key.Key_F8:
-                if modifiers & Qt.KeyboardModifier.ControlModifier:  # Ctrl+F8
-                    self.volume_controller.adjust_volume(10)
-                elif modifiers & Qt.KeyboardModifier.ShiftModifier:  # Shift+F8
-                    self.volume_controller.adjust_volume(5)
-                elif modifiers & Qt.KeyboardModifier.AltModifier:  # Alt+F8
-                    self.volume_controller.adjust_volume(100)
-                else:
-                    self.volume_controller.adjust_volume(1)  # Default behavior (no modifiers)
-                return True
-
-        return super().eventFilter(obj, event)
-
-
-
-    
-    def setup_local_server(self) -> None:
-        if not self.local_server.listen(self.server_name):
-            Logger.error(f"Failed to start local server: {self.local_server.errorString()}")
-            sys.exit(1)
-        self.local_server.newConnection.connect(self.handle_new_connection)
+    def setup_ipc_server(self) -> None:
+        self.server = wx.adv.SimpleServer(wx.adv.IPCService(self.instance_name))
+        self.server.Create(self.instance_name)
 
     def notify_existing_instance(self) -> None:
-        socket = QLocalSocket()
-        socket.connectToServer(self.server_name)
-        if socket.waitForConnected(1000):
-            socket.write(b"SHOW")
-            socket.flush()
-            socket.waitForBytesWritten(1000)
-            socket.disconnectFromServer()
-        else:
-            Logger.error("Failed to connect to existing instance.")
-
-    def handle_new_connection(self) -> None:
-        socket = self.local_server.nextPendingConnection()
-        if socket:
-            socket.readyRead.connect(lambda: self.read_message(socket))
-
-    def read_message(self, socket) -> None:
-        message = socket.readAll().data().decode()
-        if message == "SHOW" and hasattr(self, 'main_window'):
-                self.main_window.show()
-                self.main_window.raise_()
-                self.main_window.activateWindow()
-                socket.disconnectFromServer()
+        client = wx.adv.IPCClient()
+        connection = client.MakeConnection("localhost", self.instance_name, "SHOW")
+        if connection:
+            connection.Poke("SHOW", b"SHOW")
+            connection.Disconnect()
 
     def set_main_window(self, main_window) -> None:
         self.main_window = main_window
+        
+    def ProcessEvent(self, event):
+        """Process keyboard events for volume control"""
+        if isinstance(event, wx.KeyEvent) and event.GetEventType() == wx.EVT_KEY_DOWN.typeId:
+            keycode = event.GetKeyCode()
+            modifiers = event.GetModifiers()
+            
+            if keycode == wx.WXK_F5:
+                self.volume_controller.switch_category("next")
+                return True
+            elif keycode == wx.WXK_F6:
+                self.volume_controller.switch_category("previous")
+                return True
+            elif keycode == wx.WXK_F7:
+                if modifiers == wx.MOD_CONTROL:
+                    self.volume_controller.adjust_volume(-10)
+                elif modifiers == wx.MOD_SHIFT:
+                    self.volume_controller.adjust_volume(-5)
+                elif modifiers == wx.MOD_ALT:
+                    self.volume_controller.adjust_volume(-100)
+                else:
+                    self.volume_controller.adjust_volume(-1)
+                return True
+            elif keycode == wx.WXK_F8:
+                if modifiers == wx.MOD_CONTROL:
+                    self.volume_controller.adjust_volume(10)
+                elif modifiers == wx.MOD_SHIFT:
+                    self.volume_controller.adjust_volume(5)
+                elif modifiers == wx.MOD_ALT:
+                    self.volume_controller.adjust_volume(100)
+                else:
+                    self.volume_controller.adjust_volume(1)
+                return True
+        
+        return super().ProcessEvent(event)
 
 def call_after_starting(parent: QuranInterface) -> None:
-        
     basmala = StartupSoundEffectPlayer("Audio/basmala")
     basmala.play()
 
@@ -115,32 +86,35 @@ def call_after_starting(parent: QuranInterface) -> None:
     update_manager = UpdateManager(parent, check_update_enabled)
     update_manager.check_auto_update()
 
-    parent.setFocus()
-    QTimer.singleShot(500, parent.quran_view.setFocus)
-    
+    parent.SetFocus()
+    wx.CallLater(500, lambda: parent.quran_view.SetFocus() if hasattr(parent, 'quran_view') else None)
 
 def main():
     try:
-        app = SingleInstanceApplication(sys.argv)
-        app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        main_window = QuranInterface(program_name)
+        app = SingleInstanceApplication()
+        
+        # Check if another instance is running
+        if app.instance_checker.IsAnotherRunning():
+            return
+        
+        main_window = QuranInterface(None, title=program_name)
         app.set_main_window(main_window)
+        
         if "--minimized" not in sys.argv:
-            main_window.show()
+            main_window.Show()
+        
         call_after_starting(main_window)
-        sys.exit(app.exec())
+        app.MainLoop()
     except Exception as e:
         print(e)
         Logger.error(str(e))
-        msg_box = QMessageBox(None)
-        msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("خطأ")
-        msg_box.setText("حدث خطأ، إذا استمرت المشكلة، يرجى تفعيل السجل وتكرار الإجراء الذي تسبب بالخطأ ومشاركة رمز الخطأ والسجل مع المطورين.")
+        dlg = wx.MessageDialog(None, 
+            "حدث خطأ، إذا استمرت المشكلة، يرجى تفعيل السجل وتكرار الإجراء الذي تسبب بالخطأ ومشاركة رمز الخطأ والسجل مع المطورين.",
+            "خطأ",
+            wx.OK | wx.ICON_ERROR)
+        dlg.ShowModal()
+        dlg.Destroy()
 
-        ok_button = msg_box.addButton("موافق", QMessageBox.ButtonRole.AcceptRole)
-        msg_box.exec()
-
-        
 if __name__ == "__main__":    
     freeze_support()
     main()
