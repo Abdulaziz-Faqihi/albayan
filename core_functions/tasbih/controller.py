@@ -1,15 +1,18 @@
-from PyQt6.QtCore import QObject, pyqtSignal
+import wx
+import wx.lib.newevent
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError
 from .model import Base, TasbihEntry
 from utils.logger import Logger
 
+# Define custom events
+TasbihEntryAddedEvent, EVT_TASBIH_ENTRY_ADDED = wx.lib.newevent.NewEvent()
+TasbihEntryUpdatedEvent, EVT_TASBIH_ENTRY_UPDATED = wx.lib.newevent.NewEvent()
 
-class TasbihController(QObject):
-    # Signal emitted whenever the list of tasbih entries is updated.
-    entrieAdded = pyqtSignal(TasbihEntry)
-    entrieUpdated = pyqtSignal(TasbihEntry)
+
+class TasbihController(wx.EvtHandler):
+    # Event emitted whenever the list of tasbih entries is updated.
 
     def __init__(self, db_path: str):
         super().__init__()
@@ -18,6 +21,16 @@ class TasbihController(QObject):
         Base.metadata.create_all(self.engine)  # Create tables if they don't exist.
         self.Session = scoped_session(sessionmaker(bind=self.engine))
         self._initialize_default_entries()
+
+    def _emit_entry_added(self, entry):
+        """Emit entry added event"""
+        event = TasbihEntryAddedEvent(entry=entry)
+        wx.PostEvent(self, event)
+
+    def _emit_entry_updated(self, entry):
+        """Emit entry updated event"""
+        event = TasbihEntryUpdatedEvent(entry=entry)
+        wx.PostEvent(self, event)
 
     def _initialize_default_entries(self):
         """Insert a list of default tasbih entries if they are not already in the database."""
@@ -45,7 +58,7 @@ class TasbihController(QObject):
                 new_entry = TasbihEntry(name=name)
                 session.add(new_entry)
                 session.commit()
-                self.entrieAdded.emit(self.get_entry(new_entry.id))
+                self._emit_entry_added(self.get_entry(new_entry.id))
         except IntegrityError as e:
             #Logger.error(e)
             pass
@@ -62,7 +75,7 @@ class TasbihController(QObject):
         with self.Session() as session:
             session.merge(tasbih_entry)
             session.commit()
-            self.entrieUpdated.emit(tasbih_entry)
+            self._emit_entry_updated(tasbih_entry)
 
     def increment_entry_counter(self, entry_id: int):
         """Increment the counter for a specific tasbih entry."""

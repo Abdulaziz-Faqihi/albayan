@@ -1,5 +1,5 @@
 import os
-from PyQt6.QtWidgets import QMessageBox
+import wx
 from utils.logger import Logger
 
 class ThemeManager:
@@ -21,7 +21,8 @@ class ThemeManager:
     def apply_theme(self, selected_theme):
 
         if selected_theme == "default":
-            self.window.setStyleSheet("")
+            # Reset to default theme in wxPython
+            # Note: wxPython doesn't use QSS stylesheets
             return
 
         theme_file = self.themes.get(selected_theme)
@@ -35,13 +36,15 @@ class ThemeManager:
             return None
 
         try:
-            with open(theme_path, 'r') as theme_file:
-                stylesheet = theme_file.read()
-                self.window.setStyleSheet(stylesheet)
+            # Note: wxPython doesn't support QSS stylesheets
+            # Theme files would need to be converted to wxPython styling
+            Logger.warning("Theme system needs to be reimplemented for wxPython")
         except Exception as e:
             Logger.error(str(e))
-            message_box = QMessageBox()
-            message_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-            message_box.button(QMessageBox.StandardButton.Ok).setText("موافق")
-            message_box.critical(self.window, "خطأ", "حدث خطأ أثناء تغيير الثيم.")
-            message_box.exec()
+            dlg = wx.MessageDialog(self.window, 
+                "حدث خطأ أثناء تغيير الثيم.", 
+                "خطأ", 
+                wx.OK | wx.ICON_ERROR)
+            dlg.ShowModal()
+            dlg.Destroy()
+

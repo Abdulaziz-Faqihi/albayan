@@ -1,5 +1,4 @@
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QSystemTrayIcon
+import wx
 import os
 import json
 from datetime import datetime, time
@@ -60,7 +59,9 @@ class AthkarScheduler:
 
         icon_path = "Albayan.ico"
 
-        Globals.TRAY_ICON.showMessage(title, description, QIcon(icon_path), 5000)
+        # wxPython's TaskBarIcon.ShowBalloon method
+        if Globals.TRAY_ICON:
+            Globals.TRAY_ICON.ShowBalloon(title, description, msec=5000, flags=wx.ICON_INFORMATION)
 
     @staticmethod
     def _parse_time(time_str: str) -> time:
