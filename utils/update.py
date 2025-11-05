@@ -1,87 +1,91 @@
+"""Update helpers implemented with wxPython dialogs."""
+
+from __future__ import annotations
+
+import threading
+from typing import Optional
+
 import requests
-from threading import Thread
+import wx
 from packaging import version
-from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import QTimer, QThread, pyqtSignal
+
 from utils.logger import Logger
 from utils.settings import SettingsManager
 from utils.const import program_name, program_version
-from ui.dialogs.update_dialog import UpdateDialog
-from exceptions.base import ErrorMessage
-
-
-class UpdateChecker(QThread):
-    update_available = pyqtSignal(dict)
-    update_error = pyqtSignal(str)
-    session = requests.Session()
-    url = "https://raw.githubusercontent.com/tecwindow/albayan/main/info.json"
-    
-    def __init__(self):
-        super().__init__()
-
-    def run(self):
-        try:
-            response = UpdateChecker.session.get(UpdateChecker.url)
-            response.raise_for_status()
-            info = response.json()
-            self.update_available.emit(info)
-        except requests.exceptions.ConnectionError as e:
-            Logger.error(ErrorMessage(e))
-            self.update_error.emit("لا يوجد اتصال بالإنترنت.")
-        except Exception as e:
-            Logger.error(ErrorMessage(e))
-            self.update_error.emit("حدث خطأ أثناء الاتصال بالخادم.")
 
 
 class UpdateManager:
-    def __init__(self, parent, auto_update=False):
+    """Check for application updates using a background thread."""
+
+    UPDATE_URL = "https://raw.githubusercontent.com/tecwindow/albayan/main/info.json"
+
+    def __init__(self, parent: Optional[wx.Window], auto_update: bool = False) -> None:
         self.parent = parent
         self.auto_update = auto_update
+        self._session = requests.Session()
 
     def check_auto_update(self) -> None:
         if self.auto_update:
             self.check_updates()
         else:
-            # Make one request in thread to open session
-            Thread(target=UpdateChecker.session.get, kwargs={'url': UpdateChecker.url}, daemon=True).start()
+            threading.Thread(target=self._warm_up, daemon=True).start()
 
-    def check_updates(self):
-        self.update_checker = UpdateChecker()
-        self.update_checker.update_available.connect(lambda info: self.on_update_available(info))
-        self.update_checker.update_error.connect(lambda error: self.on_update_error(error))
-        self.update_checker.start()
+    def check_updates(self) -> None:
+        threading.Thread(target=self._fetch_update_info, daemon=True).start()
 
-    def on_update_available(self, info:dict):
-        """Checks for updates and notifies the user if an update is available."""
+    def _warm_up(self) -> None:
+        try:
+            self._session.get(self.UPDATE_URL, timeout=5)
+        except Exception as exc:  # pragma: no cover - warm up best effort
+            Logger.info(f"Update warm up failed: {exc}")
+
+    def _fetch_update_info(self) -> None:
+        try:
+            response = self._session.get(self.UPDATE_URL, timeout=15)
+            response.raise_for_status()
+            info = response.json()
+        except requests.exceptions.ConnectionError:
+            message = "لا يوجد اتصال بالإنترنت."
+            Logger.info(message)
+            if not self.auto_update:
+                wx.CallAfter(self._show_error_message, message)
+            return
+        except Exception as exc:  # pragma: no cover - network failures
+            message = "حدث خطأ أثناء الاتصال بالخادم."
+            Logger.error(f"Update check failed: {exc}")
+            if not self.auto_update:
+                wx.CallAfter(self._show_error_message, message)
+            return
+
+        wx.CallAfter(self._handle_update_info, info)
+
+    def _handle_update_info(self, info: dict) -> None:
         latest_version = info.get("latest_version")
-        if version.parse(latest_version) > version.parse(program_version):
-            language = SettingsManager.current_settings["general"].get("language", "Arabic")
-            release_notes = info.get("release_notes", {}).get(language, info["release_notes"].get("Arabic", ""))
-            download_url = info.get("download_url")
-            self.show_update_dialog(release_notes, download_url, latest_version)
-        else:
-            self.show_no_update_dialog()
+        if not latest_version:
+            return
 
-    def on_update_error(self, error_message):
-        if not self.auto_update:
-            msg_box = QMessageBox(self.parent)
-            msg_box.setIcon(QMessageBox.Icon.Critical)
-            msg_box.setWindowTitle("خطأ")
-            msg_box.setText(error_message)
+        if version.parse(latest_version) <= version.parse(program_version):
+            if not self.auto_update:
+                wx.MessageBox(
+                    f"أنت تستخدم {program_name} الإصدار {program_version}، وهو الإصدار الأحدث.",
+                    "لا يوجد تحديث",
+                    parent=self.parent,
+                )
+            return
 
-            ok_button = msg_box.addButton("موافق", QMessageBox.ButtonRole.AcceptRole)
-            msg_box.exec()
+        language = SettingsManager.current_settings["general"].get("language", "Arabic")
+        release_notes = info.get("release_notes", {}).get(language)
+        if not release_notes:
+            release_notes = info.get("release_notes", {}).get("Arabic", "")
+        download_url = info.get("download_url", "")
+        self._show_update_dialog(release_notes, download_url, latest_version)
 
-    def show_update_dialog(self, release_notes, download_url, latest_version):
-        UpdateDialog(self.parent, release_notes, download_url, latest_version).exec()
+    def _show_error_message(self, error_message: str) -> None:
+        wx.MessageBox(error_message, "خطأ", style=wx.ICON_ERROR | wx.OK, parent=self.parent)
 
-    def show_no_update_dialog(self):
-        if not self.auto_update:
-            msg_box = QMessageBox(self.parent)
-            msg_box.setIcon(QMessageBox.Icon.Information)
-            msg_box.setWindowTitle("لا يوجد تحديث.")
-            msg_box.setText(f"أنت تستخدم {program_name} الإصدار {program_version}, وهو الإصدار الأحدث.")
+    def _show_update_dialog(self, release_notes: str, download_url: str, latest_version: str) -> None:
+        from ui.wx.dialogs.update_dialog import UpdateDialog
 
-            ok_button = msg_box.addButton("موافق", QMessageBox.ButtonRole.AcceptRole)
-            msg_box.exec()
-
+        dialog = UpdateDialog(self.parent, release_notes, download_url, latest_version)
+        dialog.ShowModal()
+        dialog.Destroy()

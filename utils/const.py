@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from PyQt6.QtWidgets import QSystemTrayIcon
 
 tecwindow_folder = os.path.join(os.getenv("AppData"), "tecwindow")
 albayan_folder = os.path.join(tecwindow_folder, "albayan")

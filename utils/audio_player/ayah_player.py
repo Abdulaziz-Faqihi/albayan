@@ -1,4 +1,3 @@
-from PyQt6.QtWidgets import QMessageBox
 from .bass_player import AudioPlayer
 from utils.settings import SettingsManager
 
