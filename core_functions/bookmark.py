@@ -1,7 +1,6 @@
 import sqlite3
 import os
 import datetime
-from PyQt6.QtWidgets import QMessageBox
 from utils.logger import Logger
 from utils.const import albayan_folder
 

@@ -1,146 +1,120 @@
 import sys
 import os
+from multiprocessing import freeze_support
+
+import wx
+from wx import adv as wxadv
+
 current_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 os.chdir(current_dir)
 
-from multiprocessing import freeze_support
-from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtCore import QTimer, Qt, QSharedMemory, QEvent
-from PyQt6.QtNetwork import QLocalServer, QLocalSocket
-from ui.quran_interface import QuranInterface
-from core_functions.athkar.athkar_scheduler import AthkarScheduler
+from ui.wx.quran_interface import QuranInterface
 from utils.update import UpdateManager
 from utils.settings import SettingsManager
-from utils.const import program_name, program_icon, user_db_path
+from utils.const import program_name
 from utils.logger import Logger
 from utils.audio_player import StartupSoundEffectPlayer, VolumeController
 
-class SingleInstanceApplication(QApplication):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        app_id = "Albayan" if sys.argv[0].endswith(".exe") else "Albayan_Source"
-        self.setApplicationName(program_name)
-        self.server_name = app_id
-        self.local_server = QLocalServer(self)
-        self.shared_memory = QSharedMemory(app_id)
-        self.is_running = self.shared_memory.attach()
+
+class AlbayanApp(wx.App):
+    """Albayan main wxPython application."""
+
+    def __init__(self):
+        super().__init__(clearSigInt=True)
+        self.instance_checker = None
         self.volume_controller = VolumeController()
-        self.installEventFilter(self) 
+        self.frame: QuranInterface | None = None
 
-        if not self.is_running:
-            if not self.shared_memory.create(1):
-                Logger.error(f"Failed to create shared memory segment: {self.shared_memory.errorString()}")
-                sys.exit(1)
-            self.setup_local_server()
-        else:
-            self.notify_existing_instance()
-            sys.exit(0)
+    def OnInit(self) -> bool:
+        app_id = "Albayan" if sys.argv[0].endswith(".exe") else "Albayan_Source"
+        self.instance_checker = wxadv.SingleInstanceChecker(app_id)
+        if self.instance_checker.IsAnotherRunning():
+            wx.MessageBox(
+                "يعمل البرنامج بالفعل.",
+                program_name,
+                style=wx.ICON_INFORMATION | wx.OK,
+            )
+            return False
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            modifiers = event.modifiers()
-
-            if key == Qt.Key.Key_F5:
-                self.volume_controller.switch_category("next")
-                return True
-            elif key == Qt.Key.Key_F6:
-                self.volume_controller.switch_category("previous")
-                return True
-            elif key == Qt.Key.Key_F7:
-                if modifiers & Qt.KeyboardModifier.ControlModifier:  # Ctrl+F7
-                    self.volume_controller.adjust_volume(-10)
-                elif modifiers & Qt.KeyboardModifier.ShiftModifier:  # Shift+F7
-                    self.volume_controller.adjust_volume(-5)
-                elif modifiers & Qt.KeyboardModifier.AltModifier:  # Alt+F7
-                    self.volume_controller.adjust_volume(-100)
-                else:  # F7
-                    self.volume_controller.adjust_volume(-1)
-                return True
-            elif key == Qt.Key.Key_F8:
-                if modifiers & Qt.KeyboardModifier.ControlModifier:  # Ctrl+F8
-                    self.volume_controller.adjust_volume(10)
-                elif modifiers & Qt.KeyboardModifier.ShiftModifier:  # Shift+F8
-                    self.volume_controller.adjust_volume(5)
-                elif modifiers & Qt.KeyboardModifier.AltModifier:  # Alt+F8
-                    self.volume_controller.adjust_volume(100)
-                else:
-                    self.volume_controller.adjust_volume(1)  # Default behavior (no modifiers)
-                return True
-
-        return super().eventFilter(obj, event)
-
-
-
-    
-    def setup_local_server(self) -> None:
-        if not self.local_server.listen(self.server_name):
-            Logger.error(f"Failed to start local server: {self.local_server.errorString()}")
-            sys.exit(1)
-        self.local_server.newConnection.connect(self.handle_new_connection)
-
-    def notify_existing_instance(self) -> None:
-        socket = QLocalSocket()
-        socket.connectToServer(self.server_name)
-        if socket.waitForConnected(1000):
-            socket.write(b"SHOW")
-            socket.flush()
-            socket.waitForBytesWritten(1000)
-            socket.disconnectFromServer()
-        else:
-            Logger.error("Failed to connect to existing instance.")
-
-    def handle_new_connection(self) -> None:
-        socket = self.local_server.nextPendingConnection()
-        if socket:
-            socket.readyRead.connect(lambda: self.read_message(socket))
-
-    def read_message(self, socket) -> None:
-        message = socket.readAll().data().decode()
-        if message == "SHOW" and hasattr(self, 'main_window'):
-                self.main_window.show()
-                self.main_window.raise_()
-                self.main_window.activateWindow()
-                socket.disconnectFromServer()
-
-    def set_main_window(self, main_window) -> None:
-        self.main_window = main_window
-
-def call_after_starting(parent: QuranInterface) -> None:
-        
-    basmala = StartupSoundEffectPlayer("Audio/basmala")
-    basmala.play()
-
-    check_update_enabled = SettingsManager.current_settings["general"].get("check_update_enabled", False)
-    update_manager = UpdateManager(parent, check_update_enabled)
-    update_manager.check_auto_update()
-
-    parent.setFocus()
-    QTimer.singleShot(500, parent.quran_view.setFocus)
-    
-
-def main():
-    try:
-        app = SingleInstanceApplication(sys.argv)
-        app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        main_window = QuranInterface(program_name)
-        app.set_main_window(main_window)
+        self.SetAppName(program_name)
+        self.frame = QuranInterface(None, title=program_name)
         if "--minimized" not in sys.argv:
-            main_window.show()
-        call_after_starting(main_window)
-        sys.exit(app.exec())
-    except Exception as e:
-        print(e)
-        Logger.error(str(e))
-        msg_box = QMessageBox(None)
-        msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("خطأ")
-        msg_box.setText("حدث خطأ، إذا استمرت المشكلة، يرجى تفعيل السجل وتكرار الإجراء الذي تسبب بالخطأ ومشاركة رمز الخطأ والسجل مع المطورين.")
+            self.frame.Show()
 
-        ok_button = msg_box.addButton("موافق", QMessageBox.ButtonRole.AcceptRole)
-        msg_box.exec()
+        wx.CallAfter(self._post_startup)
+        self._bind_global_shortcuts()
+        return True
 
-        
-if __name__ == "__main__":    
+    def _bind_global_shortcuts(self) -> None:
+        if not self.frame:
+            return
+
+        entries: list[wx.AcceleratorEntry] = []
+        shortcuts = [
+            (wx.ACCEL_NORMAL, wx.WXK_F5, "next_category"),
+            (wx.ACCEL_NORMAL, wx.WXK_F6, "prev_category"),
+            (wx.ACCEL_NORMAL, wx.WXK_F7, "vol_down_1"),
+            (wx.ACCEL_SHIFT, wx.WXK_F7, "vol_down_5"),
+            (wx.ACCEL_CTRL, wx.WXK_F7, "vol_down_10"),
+            (wx.ACCEL_ALT, wx.WXK_F7, "vol_mute"),
+            (wx.ACCEL_NORMAL, wx.WXK_F8, "vol_up_1"),
+            (wx.ACCEL_SHIFT, wx.WXK_F8, "vol_up_5"),
+            (wx.ACCEL_CTRL, wx.WXK_F8, "vol_up_10"),
+            (wx.ACCEL_ALT, wx.WXK_F8, "vol_max"),
+        ]
+
+        for flags, keycode, command in shortcuts:
+            cmd_id = wx.NewIdRef()
+            entry = wx.AcceleratorEntry(flags, keycode, cmd_id)
+            entries.append(entry)
+            self.frame.Bind(wx.EVT_MENU, lambda evt, cmd=command: self._handle_volume_shortcut(cmd), id=cmd_id)
+
+        self.frame.SetAcceleratorTable(wx.AcceleratorTable(entries))
+
+    def _handle_volume_shortcut(self, command: str) -> None:
+        mapping = {
+            "next_category": lambda: self.volume_controller.switch_category("next"),
+            "prev_category": lambda: self.volume_controller.switch_category("previous"),
+            "vol_down_1": lambda: self.volume_controller.adjust_volume(-1),
+            "vol_down_5": lambda: self.volume_controller.adjust_volume(-5),
+            "vol_down_10": lambda: self.volume_controller.adjust_volume(-10),
+            "vol_mute": lambda: self.volume_controller.adjust_volume(-100),
+            "vol_up_1": lambda: self.volume_controller.adjust_volume(1),
+            "vol_up_5": lambda: self.volume_controller.adjust_volume(5),
+            "vol_up_10": lambda: self.volume_controller.adjust_volume(10),
+            "vol_max": lambda: self.volume_controller.adjust_volume(100),
+        }
+        handler = mapping.get(command)
+        if handler:
+            handler()
+
+    def _post_startup(self) -> None:
+        if not self.frame:
+            return
+
+        basmala = StartupSoundEffectPlayer("Audio/basmala")
+        basmala.play()
+
+        check_update_enabled = SettingsManager.current_settings["general"].get("check_update_enabled", False)
+        update_manager = UpdateManager(self.frame, check_update_enabled)
+        update_manager.check_auto_update()
+        self.frame.SetFocus()
+        wx.CallLater(500, self.frame.focus_quran_view)
+
+
+def main() -> None:
+    try:
+        app = AlbayanApp()
+        app.MainLoop()
+    except Exception as exc:  # pragma: no cover - safety net
+        Logger.error(str(exc))
+        wx.MessageBox(
+            "حدث خطأ غير متوقع. إذا استمرت المشكلة يرجى مشاركة السجل مع المطورين.",
+            "خطأ",
+            style=wx.ICON_ERROR | wx.OK,
+        )
+
+
+if __name__ == "__main__":
     freeze_support()
     main()
